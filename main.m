@@ -1,12 +1,30 @@
 clear all
 close all
 clc 
-run('physicalConstants.m');
-data = load('data.mat');
+
+% Run the script for initial values and load them as strut
+run('givenData.m');
+initialVals = load('data.mat');
+
+
+% Run interpolation and get polynomial coefficients from aerodynamic
+% coefficients
+polys = interpData(initialVals);
+
+% Get the initial speed of the projectile
+states.Vm_mpers(1) = initialVals.Vm_mpers;
+
+% Given Beta value is zero, using the approximation Beta ~ v/u we can see that
+% v = 0
+states.v(1) = 0;
+
+% We also have Alpha ~ w/u approximation and Alpha is given as 10, we use
+% this inside V_t equation to find u and w
+states.u(1) = fzero(@(u) sqrt(u^2 + (initialVals.alpha*u)^2) - states.Vm_mpers(1),[0 1E4]);
+states.w(1) = states.u(1)*initialVals.alpha;
 
 
 
-polys = interpData(data);
 
 
 
@@ -42,12 +60,6 @@ function interped = interpData(consts)
     
     interped.Cld = interp1(consts.Machpoints, consts.Cld_data,'spline','pp');
 end
-
-
-
-
-
-
 
 
 
