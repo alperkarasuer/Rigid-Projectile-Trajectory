@@ -106,7 +106,33 @@ for i = 1:elemCount
    states.mach(i+1) = states.Vm_mpers(i+1)/sos;
    aeroCoef = aeroCoefs(states, initialVals, polys, i+1);
 
+   if states.earthPosAlt(i+1) <= 0
+       break
+   end
 end
+
+%% Plots
+figure('Name', 'X-Y-H, 3D Plot')
+plot3(states.earthPosX, states.earthPosY, states.earthPosAlt)
+xlabel('X Axis')
+ylabel('Y Axis')
+zlabel('Altitude Axis')
+
+figure('Name', 'X-H Plot')
+plot(states.earthPosX, states.earthPosAlt);
+xlabel('X Axis')
+ylabel('Altitude Axis')
+
+figure('Name', 'Y-H Plot')
+plot(states.earthPosY, states.earthPosAlt);
+xlabel('Y Axis')
+ylabel('Altitude Axis')
+
+figure('Name', 'X-Y Plot')
+plot(states.earthPosX, states.earthPosY);
+xlabel('X Axis')
+ylabel('Y Axis')
+
 
 %% Function Definitions
 
