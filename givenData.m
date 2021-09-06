@@ -1,4 +1,4 @@
-clear all
+clear
 
 %% Constants
 dt = 0.01;
@@ -111,6 +111,6 @@ amz = g;
 
 %% Save workspace
 save('data.mat')
-clear all
+clear
 
 

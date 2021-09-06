@@ -1,12 +1,18 @@
-clear all
-close all
+clear
+close
 clc 
 
-% Run the script for initial values and load them as struct
-run('givenData.m');
-initialVals = load('data.mat');
-endTime = 20; % seconds
-elemCount = size((0:initialVals.dt:endTime)',1);
+% If the data file doesn't exist then
+% run the script, load the resulting data for initial values as a struct
+if(isfile('data.mat'))
+    inits = load('data.mat');
+else
+    run('givenData.m')
+    inits = load('data.mat');
+end
+
+endTime = 100; % seconds, should reach ground before this
+elemCount = size((0:inits.dt:endTime)',1); 
 
 % NED to Body Transformation Matrix
 Lbe = @(psi,theta,phi) [cos(theta)*cos(psi), cos(theta)*sin(psi), -sin(theta);...
@@ -15,124 +21,264 @@ Lbe = @(psi,theta,phi) [cos(theta)*cos(psi), cos(theta)*sin(psi), -sin(theta);..
 
 %% Initialization of states
 
-% Run interpolation and get polynomial coefficients from aerodynamic
+% Run interpolation and get polynomial coefficients for aerodynamic
 % coefficients
-polys = interpData(initialVals);
+polys = interpData(inits);
+
+% Initialize empty arrays with the maximum expected size
+[states.Vm_mpers, states.mach, states.alpha, states.beta, states.u,...
+    states.v, states.w, states.p, states.q, states.r, states.phi,...
+    states.theta, states.psi, states.earthPosX, states.earthPosY,...
+    states.earthPosZ, states.earthPosAlt] = deal(zeros(1,elemCount + 1));
 
 % Get the initial speed of the projectile
-states.Vm_mpers(1) = initialVals.Vm_mpers;
-states.mach(1) = initialVals.mach;
+states.Vm_mpers(1) = inits.Vm_mpers;
+states.mach(1) = inits.mach;
 
 % Initial Angle of Attack and Sideslip Angle
-states.alpha(1) = initialVals.alpha;
-states.beta(1) = initialVals.beta;
+states.alpha(1) = inits.alpha;
+states.beta(1) = inits.beta;
 
 % Given Beta value and known V_t we can find the v value
-states.u(1) = cos(initialVals.alpha)*cos(initialVals.beta)*states.Vm_mpers(1);
-states.v(1) = -cos(initialVals.alpha)*sin(initialVals.beta)*states.Vm_mpers(1);
-states.w(1) = sin(initialVals.alpha)*states.Vm_mpers(1);
+states.u(1) = cos(inits.alpha)*cos(inits.beta)*states.Vm_mpers(1);
+states.v(1) = -cos(inits.alpha)*sin(inits.beta)*states.Vm_mpers(1);
+states.w(1) = sin(inits.alpha)*states.Vm_mpers(1);
 
 % Initial angular rates and Euler angles
-states.p(1) = initialVals.p;
-states.q(1) = initialVals.q;
-states.r(1) = initialVals.r;
+states.p(1) = inits.p;
+states.q(1) = inits.q;
+states.r(1) = inits.r;
 
-states.phi(1) = initialVals.phi;
-states.theta(1) = initialVals.theta;
-states.psi(1) = initialVals.psi;
+states.phi(1) = inits.phi;
+states.theta(1) = inits.theta;
+states.psi(1) = inits.psi;
 
-% Deflection Angles
-states.def_de = initialVals.def_de;
-states.def_dr = initialVals.def_dr;
-states.def_da = initialVals.def_da;
+% Fin deflection Angles
+states.def_de = inits.def_de;
+states.def_dr = inits.def_dr;
+states.def_da = inits.def_da;
 
 % NED axis positions
-states.earthPosX(1) = initialVals.xm;
-states.earthPosY(1) = initialVals.ym;
-states.earthPosAlt(1) = initialVals.hm;
-states.earthPosZ(1) = initialVals.zm;
+states.earthPosX(1) = inits.xm;
+states.earthPosY(1) = inits.ym;
+states.earthPosAlt(1) = inits.hm;
+states.earthPosZ(1) = inits.zm;
 
-[rho, T, sos] = altitudeProp(states.earthPosAlt(1), initialVals);
-Qd = 0.5*rho*states.Vm_mpers(1);
-aeroCoef = aeroCoefs(states, initialVals, polys, 1);
-
+% Initial atmospheric properties and aerodynamic coefficients
+[rho, T, sos] = altitudeProp(states.earthPosAlt(1), inits);
+Qd = 0.5*rho*states.Vm_mpers(1)^2;
+aeroCoef = aeroCoefs(states, inits, polys, 1);
 
 %% Iterative Solution
-for i = 1:elemCount   
-   forces = transpose(Qd*initialVals.A.*aeroCoef(1:3));
-   moments = transpose(Qd*initialVals.A*initialVals.d*aeroCoef(3:6));
-   gravOnBody = Lbe(states.psi(i), states.theta(i), states.phi(i))*[0; 0; initialVals.g];
-   forces = forces + initialVals.m*gravOnBody;
-   
-   angRateDots = [moments(1)/initialVals.Ix;...
-       moments(2)/initialVals.Iy + states.r(i)*states.p(i)*(initialVals.Iy - initialVals.Ix)/initialVals.Iy;...
-       moments(3)/initialVals.Iy + states.p(i)*states.q(i)*(initialVals.Ix - initialVals.Iy)/initialVals.Iy];
-   
-   velDots = [forces(1)/initialVals.m - states.w(i)*states.q(i) + states.v(i)*states.r(i);...
-       forces(2)/initialVals.m - states.u(i)*states.r(i) + states.w(i)*states.p(i);...
-       forces(3)/initialVals.m - states.v(i)*states.p(i) + states.u(i)*states.q(i)];
-       
-   eulerDots = [(states.q(i)*sin(states.phi(i)) + states.r(i)*cos(states.phi(i)))/cos(states.theta(i));...
-                states.q(i)*cos(states.phi(i)) - states.r(i)*sin(states.phi(i));...
-                states.p(i) + (states.q(i)*sin(states.phi(i)) + states.r(i)*cos(states.phi(i)))*tan(states.theta(i))];
-            
-   
-   states.psi(i+1) = states.psi(i) + eulerDots(1)*initialVals.dt;
-   states.theta(i+1) = states.theta(i) + eulerDots(2)*initialVals.dt;
-   states.phi(i+1) = states.phi(i) + eulerDots(3)*initialVals.dt;
-   
-   states.p(i+1) = states.p(i) + angRateDots(1)*initialVals.dt;
-   states.q(i+1) = states.q(i) + angRateDots(2)*initialVals.dt;
-   states.r(i+1) = states.r(i) + angRateDots(3)*initialVals.dt;
-   
-   states.u(i+1) = states.u(i) + velDots(1)*initialVals.dt;
-   states.v(i+1) = states.v(i) + velDots(2)*initialVals.dt;
-   states.w(i+1) = states.w(i) + velDots(3)*initialVals.dt;
-                
-   velOnNED = transpose(Lbe(states.psi(i+1), states.theta(i+1), states.phi(i+1)))*[states.u(i+1); states.v(i+1); states.w(i+1)];
-   
-   states.earthPosX(i+1) = states.earthPosX(i) + velOnNED(1)*initialVals.dt;
-   states.earthPosY(i+1) = states.earthPosY(i) + velOnNED(2)*initialVals.dt;
-   states.earthPosZ(i+1) = states.earthPosZ(i) + velOnNED(3)*initialVals.dt;
-   states.earthPosAlt(i+1) = states.earthPosAlt(i) - velOnNED(3)*initialVals.dt;
-   
-   states.Vm_mpers(i+1) = sqrt((states.u(i+1))^2+(states.v(i+1))^2+(states.w(i+1))^2);
-   
-   states.alpha(i+1) = atan(states.w(i+1)/states.u(i+1));
-   states.beta(i+1) = asin(states.v(i+1)/states.Vm_mpers(i+1));
-   
-   [rho, T, sos] = altitudeProp(states.earthPosAlt(i+1), initialVals);
-   Qd = 0.5*rho*states.Vm_mpers(i+1);
-   states.mach(i+1) = states.Vm_mpers(i+1)/sos;
-   aeroCoef = aeroCoefs(states, initialVals, polys, i+1);
+for i = 1:elemCount
+    % Aeropropulsive forces and moments --> [Fx; Fy; Fz] & [L; M; N]
+    forces = transpose(Qd*inits.A.*aeroCoef(1:3));
+    moments = transpose(Qd*inits.A*inits.d*aeroCoef(4:6));
 
-   if states.earthPosAlt(i+1) <= 0
-       break
-   end
+    % Apply NED -> Body matrix to gravitational force vector 
+    gravOnBody = Lbe(states.psi(i), states.theta(i), states.phi(i))*[0; 0; inits.m*inits.g];
+    forces = forces + gravOnBody;
+   
+    % Rate of change for angular rates p q r --> [pDot; qDot; rDot]
+    % Found via Eqn 2.37
+    angRateDots = inits.I\moments -...
+       inits.I\(cross([states.p(i); states.q(i); states.r(i)], inits.I*[states.p(i); states.q(i); states.r(i)]));
+   
+    % Rate of change for velocities in body axis -> [uDot; vDot; wDot]
+    % Found using Eqn 2.29-2.30-2.31
+    velDots = [forces(1)/inits.m - states.w(i)*states.q(i) + states.v(i)*states.r(i);...
+        forces(2)/inits.m - states.u(i)*states.r(i) + states.w(i)*states.p(i);...
+        forces(3)/inits.m - states.v(i)*states.p(i) + states.u(i)*states.q(i)];
+    
+    % Rate of change for Euler Angles -> [psiDot; thetaDot; phiDot]
+    % As given in Eqn 2.19-2.20-2.21
+    eulerDots = [(states.q(i)*sin(states.phi(i)) + states.r(i)*cos(states.phi(i)))/cos(states.theta(i));...
+                 states.q(i)*cos(states.phi(i)) - states.r(i)*sin(states.phi(i));...
+                 states.p(i) + (states.q(i)*sin(states.phi(i)) + states.r(i)*cos(states.phi(i)))*tan(states.theta(i))]; % psi ; theta; phi
+            
+    % Find the velocities in body axis for the next step using Euler's Method   
+    states.u(i+1) = states.u(i) + velDots(1)*inits.dt;
+    states.v(i+1) = states.v(i) + velDots(2)*inits.dt;
+    states.w(i+1) = states.w(i) + velDots(3)*inits.dt;
+
+    % Total speed
+    states.Vm_mpers(i+1) = sqrt((states.u(i+1))^2+(states.v(i+1))^2+(states.w(i+1))^2);
+    
+    % Convert the velocity in body axis to NED axis using the
+    % transformation matrix
+    velOnNED = transpose(Lbe(states.psi(i), states.theta(i), states.phi(i)))*[states.u(i); states.v(i); states.w(i)];
+
+    % Find the next positions in NED axis using Euler's Method and
+    % previously found velocities in NED axis
+    states.earthPosX(i+1) = states.earthPosX(i) + velOnNED(1)*inits.dt;
+    states.earthPosY(i+1) = states.earthPosY(i) + velOnNED(2)*inits.dt;
+    states.earthPosZ(i+1) = states.earthPosZ(i) + velOnNED(3)*inits.dt;
+    states.earthPosAlt(i+1) = -states.earthPosZ(i+1);
+   
+    % Find the Euler Angles in the next iteration
+    states.psi(i+1) = states.psi(i) + eulerDots(1)*inits.dt;
+    states.theta(i+1) = states.theta(i) + eulerDots(2)*inits.dt;
+    states.phi(i+1) = states.phi(i) + eulerDots(3)*inits.dt;
+   
+    % Find the angular rates in the next step
+    states.p(i+1) = states.p(i) + angRateDots(1)*inits.dt;
+    states.q(i+1) = states.q(i) + angRateDots(2)*inits.dt;
+    states.r(i+1) = states.r(i) + angRateDots(3)*inits.dt;
+   
+    % Find the Angle of Attack and Sideslip angle in the next step
+    states.alpha(i+1) = atan(states.w(i+1)/states.u(i+1));
+    states.beta(i+1) = atan(states.v(i+1)/states.u(i+1));
+   
+    % Calculate the next atmospheric propoerties, convert the velocity into
+    % Mach number and get the new aerodynamic coefficients
+    [rho, T, sos] = altitudeProp(states.earthPosAlt(i+1), inits);
+    Qd = 0.5*rho*states.Vm_mpers(i+1)^2;
+    states.mach(i+1) = states.Vm_mpers(i+1)/sos;
+    aeroCoef = aeroCoefs(states, inits, polys, i+1);
+
+    % Terminate the iteration if the projectile is below sea level
+    if states.earthPosAlt(i+1) <= 0
+        break
+    end
 end
 
+% Array for time values to use in plots
+timeArr = 0:inits.dt:(i-1)*inits.dt;
+
 %% Plots
+
+% 3D Trajectory Plot
 figure('Name', 'X-Y-H, 3D Plot')
-plot3(states.earthPosX, states.earthPosY, states.earthPosAlt)
-xlabel('X Axis')
-ylabel('Y Axis')
-zlabel('Altitude Axis')
+set(gcf, 'WindowState', 'maximized');
+plot3(states.earthPosX(1:i), states.earthPosY(1:i), states.earthPosAlt(1:i))
+title('Trajectory','FontSize',14)
+xlabel('X Axis (m)','FontSize',12)
+ylabel('Y Axis (m)','FontSize',12)
+zlabel('Altitude (m)','FontSize',12)
 
+% X-H Plot
 figure('Name', 'X-H Plot')
-plot(states.earthPosX, states.earthPosAlt);
-xlabel('X Axis')
-ylabel('Altitude Axis')
+set(gcf, 'WindowState', 'maximized');
+plot(states.earthPosX(1:i), states.earthPosAlt(1:i));
+title('X-H Plot','FontSize',14)
+xlabel('X Axis (m)','FontSize',12)
+ylabel('Altitude (m)','FontSize',12)
 
+% Y-H Plot
 figure('Name', 'Y-H Plot')
-plot(states.earthPosY, states.earthPosAlt);
-xlabel('Y Axis')
-ylabel('Altitude Axis')
+set(gcf, 'WindowState', 'maximized');
+plot(states.earthPosY(1:i), states.earthPosAlt(1:i));
+title('Y-H Plot','FontSize',14)
+xlabel('Y Axis (m)','FontSize',12)
+ylabel('Altitude (m)','FontSize',12)
 
+% X-Y Plot
 figure('Name', 'X-Y Plot')
-plot(states.earthPosX, states.earthPosY);
-xlabel('X Axis')
-ylabel('Y Axis')
+set(gcf, 'WindowState', 'maximized');
+plot(states.earthPosX(1:i), states.earthPosY(1:i));
+title('X-Y Plot','FontSize',14)
+xlabel('X Axis (m)','FontSize',12)
+ylabel('Y Axis (m)','FontSize',12)
 
+% Body Angular Rates Plots
+figure('Name', 'p-q-r Body Angular Rates Plots')
+set(gcf, 'WindowState', 'maximized');
+subplot(3,1,1)
+plot(timeArr, states.p(1:i))
+title('p vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('p (rad/s)','FontSize',12)
+hold on
+
+subplot(3,1,2)
+plot(timeArr, states.q(1:i))
+title('q vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('q (rad/s)','FontSize',12)
+
+subplot(3,1,3)
+plot(timeArr, states.r(1:i))
+title('r vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('r (rad/s)','FontSize',12)
+
+% u-v-w Body Velocities Plots
+figure('Name', 'u-v-w Velocities in Body Frame')
+set(gcf, 'WindowState', 'maximized');
+subplot(3,1,1)
+plot(timeArr, states.u(1:i))
+title('u vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('u (m/s)','FontSize',12)
+hold on
+
+subplot(3,1,2)
+plot(timeArr, states.v(1:i))
+title('v vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('v (m/s)','FontSize',12)
+
+subplot(3,1,3)
+plot(timeArr, states.w(1:i))
+title('w vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('w (m/s)','FontSize',12)
+
+% Euler Angles Plots
+figure('Name', 'Euler Angles Plot')
+set(gcf, 'WindowState', 'maximized');
+subplot(3,1,1)
+plot(timeArr,states.phi(1:i))
+title('\phi vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('\phi (rad)','FontSize',12)
+hold on
+
+subplot(3,1,2)
+plot(timeArr,states.theta(1:i))
+title('\theta vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('\theta (rad)','FontSize',12)
+
+subplot(3,1,3)
+plot(timeArr,states.psi(1:i))
+title('\psi vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('\psi (rad)','FontSize',12)
+
+% Mach Number - Angle of Attack and Sideslip Angle Plots
+figure('Name', 'Mach Number - Alpha - Beta Plots')
+set(gcf, 'WindowState', 'maximized');
+subplot(3,1,1)
+plot(timeArr, states.mach(1:i))
+title('Mach Number vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('Mach','FontSize',12)
+hold on
+
+subplot(3,1,2)
+plot(timeArr, states.alpha(1:i))
+title('\alpha vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('\alpha (rad)','FontSize',12)
+
+subplot(3,1,3)
+plot(timeArr, states.beta(1:i))
+title('\beta vs Time','FontSize',14)
+xlim([0 timeArr(end)])
+xlabel('Time (s)','FontSize',12)
+ylabel('\beta (rad)','FontSize',12)
 
 %% Function Definitions
 
@@ -148,49 +294,46 @@ function [rho, T, speedOfSound] = altitudeProp(h, consts)
     speedOfSound = sqrt(consts.k*consts.R*T); 
 end
 
-% Obtain interpolation coefficients to use with ppval
+% Obtain interpolation coefficients
 function interped = interpData(consts)
-    interped.Cd = interp1(consts.Machpoints, consts.Cd_data,'spline','pp');
+    interped.Cd = griddedInterpolant(consts.Machpoints, consts.Cd_data);
     
-    interped.Cza = interp1(consts.Machpoints, consts.Cza_data,'spline','pp');
+    interped.Cza = griddedInterpolant(consts.Machpoints, consts.Cza_data);
     
-    interped.Czq = interp1(consts.Machpoints, consts.Czq_data,'spline','pp');
+    interped.Czq = griddedInterpolant(consts.Machpoints, consts.Czq_data);
     
-    interped.Cma = interp1(consts.Machpoints, consts.Cma_data,'spline','pp');
+    interped.Cma = griddedInterpolant(consts.Machpoints, consts.Cma_data);
     
-    interped.Cmq = interp1(consts.Machpoints, consts.Cmq_data,'spline','pp');
+    interped.Cmq = griddedInterpolant(consts.Machpoints, consts.Cmq_data);
     
-    interped.Clp = interp1(consts.Machpoints, consts.Clp_data,'spline','pp');
+    interped.Clp = griddedInterpolant(consts.Machpoints, consts.Clp_data);
     
-    interped.Czd = interp1(consts.Machpoints, consts.Czd_data,'spline','pp');
+    interped.Czd = griddedInterpolant(consts.Machpoints, consts.Czd_data);
     
-    interped.Cmd = interp1(consts.Machpoints, consts.Cmd_data,'spline','pp');
+    interped.Cmd = griddedInterpolant(consts.Machpoints, consts.Cmd_data);
     
-    interped.Cld = interp1(consts.Machpoints, consts.Cld_data,'spline','pp');
-end 
-
+    interped.Cld = griddedInterpolant(consts.Machpoints, consts.Cld_data);
+end
+    
 % Aerodynamic Coefficients
 function coefs = aeroCoefs(state, init, polyCoefs, i)
-    Cx = ppval(polyCoefs.Cd, state.mach(i));
+    Cx = polyCoefs.Cd(state.mach(i));
     
-    Cy = ppval(polyCoefs.Cza, state.mach(i))*state.beta(i) +...
-        ppval(polyCoefs.Czd, state.mach(i))*state.def_dr - ...
-        ppval(polyCoefs.Czq, state.mach(i))*state.r(i)*init.d/(2*state.Vm_mpers(i));
+    Cy = polyCoefs.Cza(state.mach(i))*state.beta(i) + polyCoefs.Czd(state.mach(i))*state.def_dr - ...
+    polyCoefs.Czq(state.mach(i))*state.r(i)*init.d/(2*state.Vm_mpers(i));
+
+    Cz = polyCoefs.Cza(state.mach(i))*state.alpha(i) + polyCoefs.Czd(state.mach(i))*state.def_de + ...
+        polyCoefs.Czq(state.mach(i))*state.q(i)*init.d/(2*state.Vm_mpers(i));
     
-    Cz = ppval(polyCoefs.Cza, state.mach(i))*state.alpha(i) + ppval(polyCoefs.Czd, state.mach(i))*state.def_de + ...
-        ppval(polyCoefs.Czq, state.mach(i))*state.q(i)*init.d/(2*state.Vm_mpers(i));
+    Cl = polyCoefs.Cld(state.mach(i))*state.def_da +...
+        polyCoefs.Clp(state.mach(i))*state.p(i)*init.d/(2*state.Vm_mpers(i));
     
-    Cl = ppval(polyCoefs.Cld, state.mach(i))*state.def_da + ppval(polyCoefs.Clp, state.mach(i))*...
-        state.p(i)*init.d/(2*state.Vm_mpers(i));
+    Cm = polyCoefs.Cma(state.mach(i))*state.alpha(i) + polyCoefs.Cmd(state.mach(i))*state.def_de + ...
+        polyCoefs.Cmq(state.mach(i))*state.q(i)*init.d/(2*state.Vm_mpers(i));
     
-    Cm = ppval(polyCoefs.Cma, state.mach(i))-state.alpha(i) + ppval(polyCoefs.Cmd, state.mach(i))*state.def_de + ...
-        ppval(polyCoefs.Cmq, state.mach(i))*state.q(i)*init.d/(2*state.Vm_mpers(i));
-    
-    Cn = -ppval(polyCoefs.Cma, state.mach(i))*state.beta(i) - ppval(polyCoefs.Cmd, state.mach(i))*state.def_dr + ...
-        ppval(polyCoefs.Cmq, state.mach(i))*state.r(i)*init.d/(2*state.Vm_mpers(i));
+    Cn = -polyCoefs.Cma(state.mach(i))*state.beta(i) - polyCoefs.Cmd(state.mach(i))*state.def_dr + ...
+        polyCoefs.Cmq(state.mach(i))*state.r(i)*init.d/(2*state.Vm_mpers(i));
     
     coefs = [Cx, Cy, Cz, Cl, Cm, Cn];
-end
-
-
     
+end 
